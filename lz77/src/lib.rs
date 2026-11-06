@@ -1,23 +1,27 @@
 use bitvec::prelude::*;
 
-trait Compress {
+/// A generic trait to compress a slice of bits
+pub trait Compress {
     fn compress(&self, input: &BitSlice<u8, Msb0>) -> BitVec<u8, Msb0>;
 }
 
-trait Decompress {
+/// A generic trait to decompress a slice of bits
+pub trait Decompress {
     fn decompress(&self, input: &BitSlice<u8, Msb0>) -> BitVec<u8, Msb0>;
 }
 
-struct LZ77 {
-    window_size: usize,
+pub struct LZ77 {
+    pub window_size: usize,
 }
 
 impl LZ77 {
-    fn new(window_size: usize) -> Self {
+    /// Constructor for the LZ77 algorithm implementation
+    pub fn new(window_size: usize) -> Self {
         Self { window_size }
     }
 }
 
+/// Implement the LZ77 compression algorithm
 impl Compress for LZ77 {
     fn compress(&self, input: &BitSlice<u8, Msb0>) -> BitVec<u8, Msb0> {
         let mut output = BitVec::<u8, Msb0>::new();
@@ -65,6 +69,7 @@ impl Compress for LZ77 {
     }
 }
 
+/// Implement the LZ77 decompression algorithm
 impl Decompress for LZ77 {
     fn decompress(&self, input: &BitSlice<u8, Msb0>) -> BitVec<u8, Msb0> {
         let mut output = BitVec::<u8, Msb0>::new();
