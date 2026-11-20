@@ -3,8 +3,11 @@
 //! Compressed data is a stream of bits whose length is not necessarily a
 //! multiple of 8, so it is exposed to JavaScript as [`BitData`], which carries
 //! the exact bit length alongside the bytes.
+//!
+//! The `*Traced` methods also return [`BitSpan`]s that link ranges of input
+//! bits to the ranges of output bits they produced.
 
-use shared::{BitBuf, Compress, Decompress};
+use shared::{BitBuf, Compress, Decompress, Traced};
 use wasm_bindgen::prelude::*;
 
 /// A sequence of bits stored as bytes, most significant bit first
@@ -39,6 +42,62 @@ impl BitData {
     }
 }
 
+/// Input bits `inputStart..inputEnd` produced output bits `outputStart..outputEnd`
+/// (end exclusive)
+#[wasm_bindgen]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BitSpan {
+    #[wasm_bindgen(js_name = inputStart)]
+    pub input_start: usize,
+    #[wasm_bindgen(js_name = inputEnd)]
+    pub input_end: usize,
+    #[wasm_bindgen(js_name = outputStart)]
+    pub output_start: usize,
+    #[wasm_bindgen(js_name = outputEnd)]
+    pub output_end: usize,
+}
+
+/// Output of an algorithm together with the spans that produced it
+#[wasm_bindgen]
+pub struct TracedData {
+    output: BitBuf,
+    spans: Vec<BitSpan>,
+}
+
+#[wasm_bindgen]
+impl TracedData {
+    #[wasm_bindgen(getter)]
+    pub fn output(&self) -> BitData {
+        BitData {
+            bits: self.output.clone(),
+        }
+    }
+
+    /// Spans in order, together covering the whole input and output
+    #[wasm_bindgen(getter)]
+    pub fn spans(&self) -> Vec<BitSpan> {
+        self.spans.clone()
+    }
+}
+
+impl From<Traced> for TracedData {
+    fn from(traced: Traced) -> Self {
+        Self {
+            output: traced.output,
+            spans: traced
+                .spans
+                .into_iter()
+                .map(|span| BitSpan {
+                    input_start: span.input.start,
+                    input_end: span.input.end,
+                    output_start: span.output.start,
+                    output_end: span.output.end,
+                })
+                .collect(),
+        }
+    }
+}
+
 fn to_bytes(bits: &BitBuf) -> Vec<u8> {
     let mut bits = bits.clone();
     bits.set_uninitialized(false);
@@ -53,6 +112,14 @@ fn compress(algorithm: &impl Compress, input: Vec<u8>) -> BitData {
 
 fn decompress(algorithm: &impl Decompress, input: &BitData) -> Vec<u8> {
     to_bytes(&algorithm.decompress(&input.bits))
+}
+
+fn compress_traced(algorithm: &impl Compress, input: Vec<u8>) -> TracedData {
+    algorithm.compress_traced(&BitBuf::from_vec(input)).into()
+}
+
+fn decompress_traced(algorithm: &impl Decompress, input: &BitData) -> TracedData {
+    algorithm.decompress_traced(&input.bits).into()
 }
 
 /// LZ77 compression
@@ -76,6 +143,16 @@ impl Lz77 {
 
     pub fn decompress(&self, input: &BitData) -> Vec<u8> {
         decompress(&self.inner, input)
+    }
+
+    #[wasm_bindgen(js_name = compressTraced)]
+    pub fn compress_traced(&self, input: Vec<u8>) -> TracedData {
+        compress_traced(&self.inner, input)
+    }
+
+    #[wasm_bindgen(js_name = decompressTraced)]
+    pub fn decompress_traced(&self, input: &BitData) -> TracedData {
+        decompress_traced(&self.inner, input)
     }
 }
 
@@ -103,6 +180,16 @@ impl Lzw {
 
     pub fn decompress(&self, input: &BitData) -> Vec<u8> {
         decompress(&self.inner, input)
+    }
+
+    #[wasm_bindgen(js_name = compressTraced)]
+    pub fn compress_traced(&self, input: Vec<u8>) -> TracedData {
+        compress_traced(&self.inner, input)
+    }
+
+    #[wasm_bindgen(js_name = decompressTraced)]
+    pub fn decompress_traced(&self, input: &BitData) -> TracedData {
+        decompress_traced(&self.inner, input)
     }
 }
 
@@ -135,5 +222,24 @@ mod tests {
 
         assert_eq!(restored.bit_len(), compressed.bit_len());
         assert_eq!(lzw.decompress(&restored), INPUT);
+    }
+
+    #[test]
+    fn test_traced_spans() {
+        let lzw = Lzw::new(12).unwrap();
+        let compressed = lzw.compress_traced(INPUT.to_vec());
+        let compressed_data = compressed.output();
+        let decompressed = lzw.decompress_traced(&compressed_data);
+
+        assert_eq!(decompressed.output().bytes(), INPUT);
+        assert_eq!(
+            compressed.spans().last().unwrap().output_end,
+            compressed_data.bit_len()
+        );
+        assert_eq!(compressed.spans().len(), decompressed.spans().len());
+        for (c, d) in compressed.spans().iter().zip(decompressed.spans()) {
+            assert_eq!((c.input_start, c.input_end), (d.output_start, d.output_end));
+            assert_eq!((c.output_start, c.output_end), (d.input_start, d.input_end));
+        }
     }
 }

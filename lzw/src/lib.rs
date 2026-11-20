@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use shared::{BitBuf, Bits, read_bits, write_bits};
+use shared::{BitBuf, Bits, Traced, read_bits, write_bits};
 
-pub use shared::{Compress, Decompress};
+pub use shared::{Compress, Decompress, Span};
 
 /// The alphabet consists of single bits: code 0 is `0` and code 1 is `1`
 const ALPHABET_SIZE: usize = 2;
@@ -37,12 +37,14 @@ fn code_width(size: usize) -> usize {
 ///
 /// Codes are written with a variable width: each code uses just enough bits
 /// to address every entry currently in the dictionary.
+///
+/// Each span links the input bits of one dictionary string to its emitted code.
 impl Compress for LZW {
-    fn compress(&self, input: &Bits) -> BitBuf {
-        let mut output = BitBuf::new();
+    fn compress_traced(&self, input: &Bits) -> Traced {
+        let mut traced = Traced::new();
 
         if input.is_empty() {
-            return output;
+            return traced;
         }
 
         let max_size = self.max_dict_size();
@@ -51,14 +53,17 @@ impl Compress for LZW {
         let mut dict_size = ALPHABET_SIZE;
 
         let mut current = input[0] as usize;
+        let mut phrase_start = 0;
 
-        for bit in input[1..].iter().by_vals() {
+        for (pos, bit) in input.iter().by_vals().enumerate().skip(1) {
             if let Some(&code) = dict.get(&(current, bit)) {
                 current = code;
                 continue;
             }
 
-            write_bits(&mut output, current, code_width(dict_size));
+            let output_start = traced.output.len();
+            write_bits(&mut traced.output, current, code_width(dict_size));
+            traced.record(phrase_start..pos, output_start);
 
             if dict_size < max_size {
                 dict.insert((current, bit), dict_size);
@@ -66,11 +71,14 @@ impl Compress for LZW {
             }
 
             current = bit as usize;
+            phrase_start = pos;
         }
 
-        write_bits(&mut output, current, code_width(dict_size));
+        let output_start = traced.output.len();
+        write_bits(&mut traced.output, current, code_width(dict_size));
+        traced.record(phrase_start..input.len(), output_start);
 
-        output
+        traced
     }
 }
 
@@ -108,12 +116,14 @@ impl DecodeDict {
 }
 
 /// Implement the LZW decompression algorithm
+///
+/// Each span links one code to the bits of the dictionary string it decoded into.
 impl Decompress for LZW {
-    fn decompress(&self, input: &Bits) -> BitBuf {
-        let mut output = BitBuf::new();
+    fn decompress_traced(&self, input: &Bits) -> Traced {
+        let mut traced = Traced::new();
 
         if input.is_empty() {
-            return output;
+            return traced;
         }
 
         let max_size = self.max_dict_size();
@@ -125,9 +135,14 @@ impl Decompress for LZW {
         let mut prev = read_bits(input, pos, width);
         pos += width;
         assert!(prev < dict.len(), "Invalid LZW code");
-        dict.write(prev, &mut output);
+        dict.write(prev, &mut traced.output);
+        traced.record(0..pos, 0);
 
         while pos < input.len() {
+            let code_start = pos;
+            let output_start = traced.output.len();
+            let output = &mut traced.output;
+
             // The decoder is one entry behind the encoder, as the entry is only
             // known once the first bit of the next string has been read
             let width = code_width((dict.len() + 1).min(max_size));
@@ -138,11 +153,11 @@ impl Decompress for LZW {
             let full = dict.len() >= max_size;
 
             let first = if code < dict.len() {
-                dict.write(code, &mut output)
+                dict.write(code, output)
             } else if code == dict.len() && !full {
                 // Special case: the code refers to the entry being created,
                 // which is the previous string followed by its own first bit
-                let first = dict.write(prev, &mut output);
+                let first = dict.write(prev, output);
                 output.push(first);
                 first
             } else {
@@ -153,10 +168,11 @@ impl Decompress for LZW {
                 dict.entries.push((Some(prev), first));
             }
 
+            traced.record(code_start..pos, output_start);
             prev = code;
         }
 
-        output
+        traced
     }
 }
 
@@ -224,6 +240,67 @@ mod tests {
 
         assert!(compressed.len() < input.len());
         assert_eq!(lzw.decompress(&compressed), input);
+    }
+
+    /// Check that compression and decompression spans cover everything and mirror each other
+    fn assert_spans_mirror(lzw: &LZW, input: &Bits) {
+        let compressed = lzw.compress_traced(input);
+        assert!(compressed.spans_cover(input.len()));
+
+        let decompressed = lzw.decompress_traced(&compressed.output);
+        assert_eq!(decompressed.output, input);
+        assert!(decompressed.spans_cover(compressed.output.len()));
+
+        assert_eq!(compressed.spans.len(), decompressed.spans.len());
+        for (c, d) in compressed.spans.iter().zip(&decompressed.spans) {
+            assert_eq!(c.input, d.output);
+            assert_eq!(c.output, d.input);
+        }
+    }
+
+    #[test]
+    fn test_lzw_spans() {
+        let lzw = LZW::new(12);
+        let input = bitvec![u8, Msb0; 0, 0, 0, 0];
+
+        // Codes: "0" (1 bit), "00" (2 bits), "0" (2 bits)
+        let compressed = lzw.compress_traced(&input);
+        assert_eq!(compressed.output, bits![u8, Msb0; 0, 1, 0, 0, 0]);
+        assert_eq!(
+            compressed.spans,
+            vec![
+                Span {
+                    input: 0..1,
+                    output: 0..1
+                },
+                Span {
+                    input: 1..3,
+                    output: 1..3
+                },
+                Span {
+                    input: 3..4,
+                    output: 3..5
+                },
+            ]
+        );
+
+        // The second code takes the special case path when decompressing
+        assert_spans_mirror(&lzw, &input);
+    }
+
+    #[test]
+    fn test_lzw_spans_mirror() {
+        assert_spans_mirror(&LZW::new(12), bits![u8, Msb0; 1]);
+        assert_spans_mirror(&LZW::new(12), &bitvec![u8, Msb0; 1; 1000]);
+        assert_spans_mirror(&LZW::new(12), &BitBuf::from_vec(b"abcabcabc".repeat(20)));
+        assert_spans_mirror(&LZW::new(3), &BitBuf::from_vec(b"full dictionary".to_vec()));
+    }
+
+    #[test]
+    fn test_lzw_empty_spans() {
+        let traced = LZW::new(12).compress_traced(&BitBuf::new());
+        assert!(traced.output.is_empty());
+        assert!(traced.spans.is_empty());
     }
 
     #[test]
