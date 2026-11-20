@@ -13,11 +13,14 @@
       "rust-analyzer"
       "llvm-tools-preview"
     ];
+
+    targets = [ "wasm32-unknown-unknown" ];
   };
 
   packages = with pkgs; [
     (cargo-llvm-cov.overrideAttrs (old: {
       doCheck = false;
     }))
+    wasm-pack
   ];
 }

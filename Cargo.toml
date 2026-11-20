@@ -1,3 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["lz77"]
+members = ["shared", "lz77", "lzw", "wasm"]
+
+[workspace.dependencies]
+bitvec = "1.1.1"
+shared = { path = "shared" }
+lz77 = { path = "lz77" }
+lzw = { path = "lzw" }

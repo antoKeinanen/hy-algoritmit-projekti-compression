@@ -1,14 +1,7 @@
 use bitvec::prelude::*;
+use shared::{BitBuf, Bits, read_bits};
 
-/// A generic trait to compress a slice of bits
-pub trait Compress {
-    fn compress(&self, input: &BitSlice<u8, Msb0>) -> BitVec<u8, Msb0>;
-}
-
-/// A generic trait to decompress a slice of bits
-pub trait Decompress {
-    fn decompress(&self, input: &BitSlice<u8, Msb0>) -> BitVec<u8, Msb0>;
-}
+pub use shared::{Compress, Decompress};
 
 pub struct LZ77 {
     pub window_size: usize,
@@ -23,8 +16,8 @@ impl LZ77 {
 
 /// Implement the LZ77 compression algorithm
 impl Compress for LZ77 {
-    fn compress(&self, input: &BitSlice<u8, Msb0>) -> BitVec<u8, Msb0> {
-        let mut output = BitVec::<u8, Msb0>::new();
+    fn compress(&self, input: &Bits) -> BitBuf {
+        let mut output = BitBuf::new();
         let mut pos = 0;
 
         while pos < input.len() {
@@ -71,8 +64,8 @@ impl Compress for LZ77 {
 
 /// Implement the LZ77 decompression algorithm
 impl Decompress for LZ77 {
-    fn decompress(&self, input: &BitSlice<u8, Msb0>) -> BitVec<u8, Msb0> {
-        let mut output = BitVec::<u8, Msb0>::new();
+    fn decompress(&self, input: &Bits) -> BitBuf {
+        let mut output = BitBuf::new();
         let mut pos = 0;
 
         const TOKEN_SIZE: usize = 33;
@@ -80,16 +73,10 @@ impl Decompress for LZ77 {
         assert!(input.len() % TOKEN_SIZE == 0, "Invalid compressed data");
 
         while pos < input.len() {
-            let offset = input[pos..pos + 16]
-                .iter()
-                .by_vals()
-                .fold(0usize, |acc, bit| (acc << 1) | bit as usize);
+            let offset = read_bits(input, pos, 16);
             pos += 16;
 
-            let length = input[pos..pos + 16]
-                .iter()
-                .by_vals()
-                .fold(0usize, |acc, bit| (acc << 1) | bit as usize);
+            let length = read_bits(input, pos, 16);
             pos += 16;
 
             let next = input[pos];
