@@ -17,6 +17,11 @@
     targets = [ "wasm32-unknown-unknown" ];
   };
 
+  languages.javascript = {
+    enable = true;
+    pnpm.enable = true;
+  };
+
   packages = with pkgs; [
     (cargo-llvm-cov.overrideAttrs (old: {
       doCheck = false;

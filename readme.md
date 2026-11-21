@@ -27,3 +27,15 @@ cargo llvm-cov
 ```
 
 
+## Web app
+
+The `web` directory has a minimal React app for testing the algorithms in the browser. It uses the `wasm` crate, which exposes the algorithms to JavaScript.
+
+With the devenv shell active:
+```shell
+cd web
+pnpm install
+pnpm dev
+```
+
+`pnpm dev` and `pnpm build` first build the wasm package into `wasm/pkg` with wasm-pack. The web app links to that package, so Rust changes show up after restarting `pnpm dev`. To rebuild only the wasm package, run `pnpm build:wasm`.
