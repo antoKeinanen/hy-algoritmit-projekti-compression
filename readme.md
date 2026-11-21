@@ -3,6 +3,9 @@
 ## Dependencies
 
 - [Rust](https://rust-lang.org/tools/install/)
+- [Node.js](https://nodejs.org/en/download)
+- [pnpm](https://pnpm.io/installation)
+- [wasm-pack](https://wasm-bindgen.github.io/wasm-pack/installer/)
 
 ## Running tests
 
@@ -30,6 +33,12 @@ cargo llvm-cov
 ## Web app
 
 The `web` directory has a minimal React app for testing the algorithms in the browser. It uses the `wasm` crate, which exposes the algorithms to JavaScript.
+
+Setup with:
+```shell
+rustup target add wasm32-unknown-unknown
+```
+
 
 With the devenv shell active:
 ```shell
